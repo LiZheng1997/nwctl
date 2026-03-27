@@ -1,4 +1,4 @@
-# Autoware Team Development Toolkit
+# nwctl - Nuway Autoware Container Manager
 
 Multi-user development and testing toolkit for Autoware. Multiple team members can work on the same host machine with fully isolated environments.
 
