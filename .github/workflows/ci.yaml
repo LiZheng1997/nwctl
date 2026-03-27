@@ -12,7 +12,7 @@ jobs:
     name: ShellCheck Lint
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
       - name: Run shellcheck on all scripts
         run: |
           # Skip SC1091 (can't follow sourced files) and SC2034 (unused vars in env.sh)
@@ -25,7 +25,7 @@ jobs:
     name: Basic Validation
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
 
       - name: Verify all scripts are executable
         run: |

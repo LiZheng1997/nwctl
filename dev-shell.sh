@@ -41,7 +41,7 @@ xhost +local:docker 2>/dev/null || true
 echo ""
 echo -e "\033[0;32m================================================"
 echo " Autoware Development Shell"
-echo "================================================\033[0m"
+echo -e "================================================\033[0m"
 echo " Image:     ${AUTOWARE_IMAGE}"
 echo " Source:    ${WORKSPACE_PATH}/src -> /workspace/src"
 echo ""
@@ -95,7 +95,7 @@ docker run -it --rm \
     -e LOCAL_GROUP="$(id -gn)" \
     -v /tmp/.X11-unix:/tmp/.X11-unix \
     -v "${WORKSPACE_PATH}/src":/workspace/src:rw \
-    ${MAP_MOUNT} \
-    ${ROSBAG_MOUNT} \
+    ${MAP_MOUNT:+"${MAP_MOUNT}"} \
+    ${ROSBAG_MOUNT:+"${ROSBAG_MOUNT}"} \
     "${AUTOWARE_IMAGE}" \
     /bin/bash

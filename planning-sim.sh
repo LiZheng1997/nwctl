@@ -41,7 +41,7 @@ fi
 echo ""
 echo -e "\033[0;32m================================================"
 echo " Autoware Planning Simulation"
-echo "================================================\033[0m"
+echo -e "================================================\033[0m"
 echo " Image:   ${AUTOWARE_IMAGE}"
 echo " Map:     ${MAP_PATH}"
 echo " Vehicle: ${VEHICLE_MODEL}"
@@ -76,7 +76,7 @@ docker run -it --rm \
     -e LOCAL_GID="$(id -g)" \
     -e LOCAL_USER="$(id -un)" \
     -e LOCAL_GROUP="$(id -gn)" \
-    ${DISPLAY_ARGS} \
+    ${DISPLAY_ARGS:+${DISPLAY_ARGS}} \
     -v "${MAP_PATH}":/autoware_map:ro \
     "${AUTOWARE_IMAGE}" \
     bash -c "source /opt/autoware/setup.bash && \
