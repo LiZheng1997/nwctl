@@ -86,12 +86,12 @@ fi
 # 5. Data paths
 echo "[5/6] Data Paths"
 if [ -d "${SHARED_MAP_PATH}" ]; then
-    if ls "${SHARED_MAP_PATH}"/*.pcd &>/dev/null || ls "${SHARED_MAP_PATH}"/**/*.pcd &>/dev/null 2>/dev/null; then
+    if find "${SHARED_MAP_PATH}" -name '*.pcd' -print -quit 2>/dev/null | grep -q .; then
         pass "Pointcloud map: ${SHARED_MAP_PATH}"
     else
         warn "Map directory exists but no .pcd files found: ${SHARED_MAP_PATH}"
     fi
-    if ls "${SHARED_MAP_PATH}"/*.osm &>/dev/null || ls "${SHARED_MAP_PATH}"/**/*.osm &>/dev/null 2>/dev/null; then
+    if find "${SHARED_MAP_PATH}" -name '*.osm' -print -quit 2>/dev/null | grep -q .; then
         pass "Lanelet2 map: ${SHARED_MAP_PATH}"
     else
         warn "Map directory exists but no .osm files found: ${SHARED_MAP_PATH}"

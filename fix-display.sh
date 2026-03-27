@@ -11,7 +11,7 @@ if [ "$(id -u)" -ne 0 ]; then
 fi
 
 echo "[1/3] Backing up and writing xorg.conf ..."
-cp /etc/X11/xorg.conf /etc/X11/xorg.conf.bak.$(date +%Y%m%d%H%M%S)
+cp /etc/X11/xorg.conf "/etc/X11/xorg.conf.bak.$(date +%Y%m%d%H%M%S)"
 
 cat > /etc/X11/xorg.conf << 'XEOF'
 # Disable extensions not useful on Tegra.

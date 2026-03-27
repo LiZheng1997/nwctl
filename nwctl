@@ -196,7 +196,7 @@ stop_user() {
     local containers
     containers=$(docker ps -q --filter "name=aw-${username}-" 2>/dev/null)
     if [ -n "${containers}" ]; then
-        docker stop ${containers}
+        docker stop "${containers}"
         echo -e "${GREEN}Stopped all containers for '${username}'${NC}"
     else
         echo -e "${YELLOW}No running containers for '${username}'${NC}"
@@ -218,7 +218,7 @@ clean_user() {
     install_size=$(du -sh "${user_ws}/install" 2>/dev/null | cut -f1)
 
     echo -e "Will clean ${username}'s build cache: build(${build_size}) + install(${install_size})"
-    read -p "Confirm? [y/N] " confirm
+    read -rp "Confirm? [y/N] " confirm
     if [[ "${confirm}" =~ ^[Yy]$ ]]; then
         rm -rf "${user_ws}/build/"* "${user_ws}/install/"* "${user_ws}/log/"*
         echo -e "${GREEN}Cleaned${NC}"
@@ -434,7 +434,8 @@ fi
 
 if [ -z "${XAUTHORITY:-}" ]; then
     if [ -f "/run/user/$(id -u)/gdm/Xauthority" ]; then
-        export XAUTHORITY="/run/user/$(id -u)/gdm/Xauthority"
+        XAUTHORITY="/run/user/$(id -u)/gdm/Xauthority"
+        export XAUTHORITY
     fi
 fi
 
@@ -449,7 +450,7 @@ fi
 # ---- Generate container entry script ----
 ENTRYPOINT_SCRIPT=$(mktemp /tmp/aw-entry-XXXXXX.sh)
 # Clean up temp file on exit (note: exec replaces process, so also clean before exec)
-trap "rm -f ${ENTRYPOINT_SCRIPT}" EXIT
+trap 'rm -f '"${ENTRYPOINT_SCRIPT}" EXIT
 
 case "${MODE}" in
     shell)
@@ -592,7 +593,7 @@ docker run -it --rm \
     -e LOCAL_USER="$(id -un)" \
     -e LOCAL_GROUP="$(id -gn)" \
     -v /tmp/.X11-unix:/tmp/.X11-unix \
-    ${SRC_MOUNT} \
+    ${SRC_MOUNT:+"${SRC_MOUNT}"} \
     -v "${SHARED_MAP_PATH}":/autoware_map:ro \
     -v "${SHARED_DATA_PATH}":/autoware_data:ro \
     -v "${ROSBAG_PATH}":/rosbag_data:ro \

@@ -52,7 +52,7 @@ xhost +local:docker 2>/dev/null || true
 echo ""
 echo -e "\033[0;32m================================================"
 echo " Autoware Rosbag Replay"
-echo "================================================\033[0m"
+echo -e "================================================\033[0m"
 echo " Image:         ${AUTOWARE_IMAGE}"
 echo " Map:           ${MAP_PATH}"
 echo " Rosbag:        ${ROSBAG_PATH}"

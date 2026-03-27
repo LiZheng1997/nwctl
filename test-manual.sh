@@ -25,7 +25,8 @@ fi
 
 if [ -z "${XAUTHORITY:-}" ]; then
     if [ -f "/run/user/$(id -u)/gdm/Xauthority" ]; then
-        export XAUTHORITY="/run/user/$(id -u)/gdm/Xauthority"
+        XAUTHORITY="/run/user/$(id -u)/gdm/Xauthority"
+        export XAUTHORITY
     fi
 fi
 
