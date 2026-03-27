@@ -24,6 +24,12 @@ while [ -L "${SOURCE}" ]; do
 done
 SCRIPT_DIR="$(cd -P "$(dirname "${SOURCE}")" && pwd)"
 
+# Handle commands that don't need env.sh early
+case "${1:-}" in
+    version|-v|--version) echo "nwctl v${NWCTL_VERSION}"; exit 0 ;;
+    -h|--help) ;; # fall through to load env.sh and print full help
+esac
+
 source "${SCRIPT_DIR}/env.sh"
 
 RED='\033[0;31m'
@@ -32,9 +38,11 @@ YELLOW='\033[0;33m'
 CYAN='\033[0;36m'
 NC='\033[0m'
 
-# ---- Init ----
-mkdir -p "${USER_WORKSPACES_ROOT}"
-touch "${USER_REGISTRY}"
+# ---- Init (only create dirs when needed, skip for read-only commands) ----
+init_workspace() {
+    mkdir -p "${USER_WORKSPACES_ROOT}"
+    touch "${USER_REGISTRY}"
+}
 
 # ============================================================
 # User Management Functions
@@ -294,8 +302,8 @@ if [ $# -lt 1 ]; then
     exit 0
 fi
 
-# Handle global commands
-case "$1" in
+# Handle read-only commands (no workspace init needed)
+case "${1:-}" in
     -h|--help)
         print_help
         exit 0
@@ -308,6 +316,13 @@ case "$1" in
         bash "${SCRIPT_DIR}/check-env.sh" "${2:-all}"
         exit 0
         ;;
+esac
+
+# All remaining commands need workspace init
+init_workspace
+
+# Handle commands
+case "$1" in
     register)
         [ $# -lt 2 ] && { echo -e "${RED}Usage: nwctl register <username> --src <src_path>${NC}"; exit 1; }
         REG_USER="$2"; shift 2; REG_SRC=""
