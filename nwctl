@@ -589,6 +589,13 @@ fi
 echo "================================================"
 echo ""
 
+# ---- Auto-pull image if not found locally ----
+if ! docker image inspect "${AUTOWARE_IMAGE}" &>/dev/null; then
+    echo -e "${YELLOW}Image not found locally. Pulling ${AUTOWARE_IMAGE}...${NC}"
+    echo "This may take a while (~15GB)."
+    docker pull "${AUTOWARE_IMAGE}" || { echo -e "${RED}Failed to pull image${NC}"; exit 1; }
+fi
+
 # ---- Launch container ----
 # Use docker run without exec so trap can clean up temp file
 docker run -it --rm \
