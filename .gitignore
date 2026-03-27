@@ -2,6 +2,9 @@
 users.conf
 workspaces/
 
+# Internal docs (not distributed)
+CONTRIBUTING.md
+
 # Editor
 *.swp
 *.swo
