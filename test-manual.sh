@@ -4,11 +4,11 @@
 # ============================================================
 set -euo pipefail
 
-AUTOWARE_IMAGE="ghcr.io/autowarefoundation/autoware:universe-devel-cuda"
-WORKSPACE_PATH="/home/lz/autoware"
-MAP_PATH="/home/lz/autoware_map"
-DATA_PATH="/home/lz/autoware_data"
-ROSBAG_PATH="/home/lz/autoware_map/sample-rosbag"
+AUTOWARE_IMAGE="${AUTOWARE_IMAGE:-ghcr.io/autowarefoundation/autoware:universe-devel-cuda}"
+WORKSPACE_PATH="${WORKSPACE_PATH:-${HOME}/autoware}"
+MAP_PATH="${MAP_PATH:-${HOME}/autoware_map}"
+DATA_PATH="${DATA_PATH:-${HOME}/autoware_data}"
+ROSBAG_PATH="${ROSBAG_PATH:-${HOME}/autoware_map/sample-rosbag}"
 CONTAINER_NAME="aw-test-manual"
 
 # Detect DISPLAY

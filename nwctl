@@ -119,12 +119,12 @@ register_user() {
         echo ""
         echo "Example:"
         echo "  # Clone your own code first"
-        echo "  cd /home/lz"
+        echo "  cd ~"
         echo "  git clone https://github.com/autowarefoundation/autoware.git myname_autoware"
         echo "  cd myname_autoware && vcs import src < repositories/autoware.repos"
         echo ""
         echo "  # Then register"
-        echo "  nwctl register myname --src /home/lz/myname_autoware/src"
+        echo "  nwctl register myname --src ~/myname_autoware/src"
         return 1
     fi
 
@@ -288,11 +288,11 @@ print_help() {
     echo "  --rate <float>          Playback rate (default: 1.0)"
     echo ""
     echo "Examples:"
-    echo "  nwctl register zhangsan --src /home/lz/zhangsan_autoware/src"
+    echo "  nwctl register zhangsan --src ~/zhangsan_autoware/src"
     echo "  nwctl zhangsan planning-sim"
     echo "  nwctl zhangsan rosbag-replay"
     echo "  nwctl zhangsan shell"
-    echo "  nwctl update zhangsan --src /home/lz/zhangsan_v2/src"
+    echo "  nwctl update zhangsan --src ~/zhangsan_v2/src"
     echo ""
 }
 

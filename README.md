@@ -6,16 +6,16 @@ Multi-user development and testing toolkit for Autoware. Multiple team members c
 
 ```
 Host Machine
-├── /home/lz/zhangsan_aw/           User A's git clone (independent)
+├── ~/zhangsan_aw/           User A's git clone (independent)
 │   ├── src/                        User A's source code & branches
 │   ├── build/                      User A's build artifacts
 │   └── install/                    User A's install
-├── /home/lz/lisi_aw/              User B's git clone (independent)
+├── ~/lisi_aw/              User B's git clone (independent)
 │   ├── src/
 │   ├── build/
 │   └── install/
-├── /home/lz/autoware_map/          Shared map data (read-only)
-├── /home/lz/autoware_data/         Shared model data (read-only)
+├── ~/autoware_map/          Shared map data (read-only)
+├── ~/autoware_data/         Shared model data (read-only)
 └── nwctl/
     └── nwctl                        CLI tool (install to PATH via install.sh)
 
@@ -71,7 +71,7 @@ docker pull ghcr.io/autowarefoundation/autoware:universe-devel-cuda
 Each team member clones their own copy:
 
 ```bash
-cd /home/lz
+cd ~
 git clone https://github.com/autowarefoundation/autoware.git myname_autoware
 cd myname_autoware
 vcs import src < repositories/autoware.repos
@@ -84,8 +84,8 @@ git checkout feature/my-algorithm
 ### 3. Register
 
 ```bash
-cd /home/lz/autoware/nwctl
-nwctl register myname --src /home/lz/myname_autoware/src
+cd ~/autoware/nwctl
+nwctl register myname --src ~/myname_autoware/src
 ```
 
 ### 4. Use
@@ -212,9 +212,9 @@ colcon build --packages-select <pkg> --symlink-install
 ### Q: Pointcloud map doesn't load
 Check file permissions:
 ```bash
-ls -la /home/lz/autoware_map/sample-map-rosbag/pointcloud_map.pcd
+ls -la ~/autoware_map/sample-map-rosbag/pointcloud_map.pcd
 # If permission is -rw-------, fix with:
-sudo chmod 644 /home/lz/autoware_map/sample-map-rosbag/pointcloud_map.pcd
+sudo chmod 644 ~/autoware_map/sample-map-rosbag/pointcloud_map.pcd
 ```
 
 ### Q: Rosbag play shows no data
@@ -230,7 +230,7 @@ Yes. Build artifacts are in your workspace directory on the host. They persist a
 ### Q: How to switch branches for testing?
 Manage your code on the host machine:
 ```bash
-cd /home/lz/myname_autoware/src/universe/autoware_universe
+cd ~/myname_autoware/src/universe/autoware_universe
 git checkout feature/new-branch
 # Then enter dev shell and rebuild
 nwctl myname shell
