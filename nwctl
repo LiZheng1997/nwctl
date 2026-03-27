@@ -12,7 +12,7 @@
 #   nwctl <username> stop                       Stop user's containers
 #   nwctl version                               Show version
 # ============================================================
-NWCTL_VERSION="0.1.0"
+NWCTL_VERSION="0.1.1"
 set -euo pipefail
 
 # Resolve SCRIPT_DIR: follow symlink if nwctl is installed via symlink
