@@ -14,6 +14,8 @@ dev     Development branch (daily work)
 main    Stable branch (releases only)
 ```
 
+> Note: `develop` branch is deprecated. Use `dev` only.
+
 ## Daily Development
 
 ```bash
@@ -30,30 +32,44 @@ git push origin dev
 
 ## Release Process
 
-### 1. Merge dev into main
+### 1. Sync with remote before starting
+
+Always fetch and rebase before merging/pushing to avoid conflicts:
+
+```bash
+git fetch origin
+git fetch org
+```
+
+### 2. Merge dev into main
 
 ```bash
 git checkout main
+git rebase origin/main    # Ensure local main is up to date
 git merge dev
-git push origin main
 ```
 
-### 2. Update version number
+### 3. Update version number
 
 Edit `nwctl` file, update `NWCTL_VERSION`:
 ```bash
-# Example: bump from 0.1.0 to 0.2.0
-sed -i 's/NWCTL_VERSION="0.1.0"/NWCTL_VERSION="0.2.0"/' nwctl
+# Example: bump from 0.1.1 to 0.2.0
+sed -i 's/NWCTL_VERSION="0.1.1"/NWCTL_VERSION="0.2.0"/' nwctl
 git add nwctl
 git commit -m "chore: bump version to 0.2.0"
+```
+
+### 4. Push to personal repo first
+
+```bash
 git push origin main
 ```
 
-### 3. Tag and push
+### 5. Tag
 
 ```bash
 git tag v0.2.0
-git push origin main --tags
+git push origin v0.2.0
 ```
 
 This triggers the GitHub Actions release workflow which:
@@ -63,13 +79,22 @@ This triggers the GitHub Actions release workflow which:
 - Generates changelog from commits
 - Creates a GitHub Release with the tarball attached
 
-### 4. Sync to organization repo
+### 6. Sync to organization repo
+
+Always push **after** personal repo succeeds:
 
 ```bash
-git push org main dev --tags
+git push org main --tags
 ```
 
-This also triggers the release workflow on the org repo.
+### 7. Sync dev branch
+
+```bash
+git checkout dev
+git merge main
+git push origin dev
+git push org dev
+```
 
 ## Full Release Checklist
 
@@ -78,27 +103,34 @@ This also triggers the release workflow on the org repo.
 git checkout dev
 git push origin dev
 
-# 2. Merge to main
+# 2. Sync local main with remote
 git checkout main
+git fetch origin
+git rebase origin/main
+
+# 3. Merge dev into main
 git merge dev
 
-# 3. Bump version
+# 4. Bump version
 sed -i 's/NWCTL_VERSION="OLD"/NWCTL_VERSION="NEW"/' nwctl
 git add nwctl
 git commit -m "chore: bump version to X.Y.Z"
 
-# 4. Push main + tag to personal repo
+# 5. Push main to personal repo FIRST
 git push origin main
+
+# 6. Tag and push tag
 git tag vX.Y.Z
-git push origin main --tags
+git push origin vX.Y.Z
 
-# 5. Sync to org repo
-git push org main dev --tags
+# 7. Sync to org repo
+git push org main --tags
 
-# 6. Switch back to dev for next cycle
+# 8. Switch back to dev for next cycle
 git checkout dev
 git merge main
 git push origin dev
+git push org dev
 ```
 
 ## Hotfix Process
@@ -106,14 +138,44 @@ git push origin dev
 ```bash
 # Branch from main
 git checkout main
+git fetch origin && git rebase origin/main
 git checkout -b hotfix/fix-description
 
-# Fix, commit, merge back
+# Fix and commit
+git add -A
 git commit -m "fix: description"
+
+# Merge back to main
 git checkout main
 git merge hotfix/fix-description
 
-# Tag and release (follow steps 3-6 above)
+# Delete hotfix branch
+git branch -d hotfix/fix-description
+
+# Follow release steps 4-8 above
+```
+
+## Troubleshooting
+
+### Push rejected (non-fast-forward)
+
+This means the remote has commits you don't have locally. Fix with:
+
+```bash
+git fetch origin
+git rebase origin/main
+# Then push again
+git push origin main
+```
+
+### Tag already exists on remote
+
+```bash
+# Delete remote tag, re-create and push
+git push origin --delete vX.Y.Z
+git tag -d vX.Y.Z
+git tag vX.Y.Z
+git push origin vX.Y.Z
 ```
 
 ## Optional: Push to Both Repos at Once
