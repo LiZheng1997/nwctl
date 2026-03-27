@@ -1,0 +1,9 @@
+# Runtime files (generated per-host)
+users.conf
+workspaces/
+
+# Editor
+*.swp
+*.swo
+*~
+.vscode/

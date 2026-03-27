@@ -1,0 +1,53 @@
+name: CI
+
+on:
+  push:
+    branches: [main, develop]
+  pull_request:
+    branches: [main, develop]
+
+jobs:
+  lint:
+    name: ShellCheck Lint
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install shellcheck
+        run: sudo apt-get install -y shellcheck
+      - name: Run shellcheck on all scripts
+        run: |
+          shellcheck -x nwctl check-env.sh env.sh fix-display.sh \
+            planning-sim.sh rosbag-replay.sh dev-shell.sh \
+            test-manual.sh install.sh uninstall.sh
+
+  test:
+    name: Basic Validation
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Verify all scripts are executable
+        run: |
+          for f in nwctl check-env.sh fix-display.sh planning-sim.sh \
+                   rosbag-replay.sh dev-shell.sh test-manual.sh \
+                   install.sh uninstall.sh; do
+            if [ ! -x "$f" ]; then
+              echo "FAIL: $f is not executable"
+              exit 1
+            fi
+          done
+          echo "All scripts are executable"
+      - name: Verify start.sh symlink
+        run: |
+          if [ ! -L start.sh ] || [ "$(readlink start.sh)" != "nwctl" ]; then
+            echo "FAIL: start.sh should be a symlink to nwctl"
+            exit 1
+          fi
+          echo "start.sh symlink OK"
+      - name: Test nwctl --help
+        run: |
+          # Mock env.sh dependencies for CI
+          mkdir -p /tmp/nwctl-test/workspaces
+          export USER_WORKSPACES_ROOT=/tmp/nwctl-test/workspaces
+          bash nwctl --help
+      - name: Test nwctl version
+        run: bash nwctl version

@@ -1,0 +1,601 @@
+#!/usr/bin/env bash
+# ============================================================
+# nwctl - Nuway Autoware Container Manager
+#
+# Usage:
+#   nwctl register <username> --src <src_path>  Register a new user
+#   nwctl list                                  List all users
+#   nwctl <username> shell                      Enter dev shell
+#   nwctl <username> planning-sim               Launch planning simulation
+#   nwctl <username> rosbag-replay              Launch rosbag replay
+#   nwctl status                                Show running containers
+#   nwctl <username> stop                       Stop user's containers
+#   nwctl version                               Show version
+# ============================================================
+NWCTL_VERSION="0.1.0"
+set -euo pipefail
+
+# Resolve SCRIPT_DIR: follow symlink if nwctl is installed via symlink
+SOURCE="${BASH_SOURCE[0]}"
+while [ -L "${SOURCE}" ]; do
+    DIR="$(cd -P "$(dirname "${SOURCE}")" && pwd)"
+    SOURCE="$(readlink "${SOURCE}")"
+    [[ "${SOURCE}" != /* ]] && SOURCE="${DIR}/${SOURCE}"
+done
+SCRIPT_DIR="$(cd -P "$(dirname "${SOURCE}")" && pwd)"
+
+source "${SCRIPT_DIR}/env.sh"
+
+RED='\033[0;31m'
+GREEN='\033[0;32m'
+YELLOW='\033[0;33m'
+CYAN='\033[0;36m'
+NC='\033[0m'
+
+# ---- Init ----
+mkdir -p "${USER_WORKSPACES_ROOT}"
+touch "${USER_REGISTRY}"
+
+# ============================================================
+# User Management Functions
+# ============================================================
+
+# Registry format: username:domain_id:src_path
+
+get_domain_id() {
+    local username="$1"
+    grep "^${username}:" "${USER_REGISTRY}" | cut -d: -f2
+}
+
+get_src_path() {
+    local username="$1"
+    grep "^${username}:" "${USER_REGISTRY}" | cut -d: -f3
+}
+
+# Reserved DOMAIN_IDs (production use, cannot be assigned)
+RESERVED_DOMAIN_IDS="5"
+
+# Starting DOMAIN_ID (valid range: 0-232, avoid 0-9 for common use)
+DOMAIN_ID_START=10
+
+next_domain_id() {
+    local candidate
+    if [ ! -s "${USER_REGISTRY}" ]; then
+        candidate=${DOMAIN_ID_START}
+    else
+        local max_id
+        max_id=$(cut -d: -f2 "${USER_REGISTRY}" | sort -n | tail -1)
+        candidate=$((max_id + 1))
+    fi
+    # Skip reserved IDs
+    while echo "${RESERVED_DOMAIN_IDS}" | grep -qw "${candidate}"; do
+        candidate=$((candidate + 1))
+    done
+    # ROS_DOMAIN_ID valid range: 0-232
+    if [ "${candidate}" -gt 232 ]; then
+        echo -e "${RED}No available DOMAIN_IDs (max 232)${NC}" >&2
+        return 1
+    fi
+    echo "${candidate}"
+}
+
+# Register a new user
+# Usage: register_user <username> <src_path>
+register_user() {
+    local username="$1"
+    local src_path="${2:-}"
+
+    # Validate username: only alphanumeric, underscore, hyphen
+    if [[ ! "${username}" =~ ^[a-zA-Z0-9_-]+$ ]]; then
+        echo -e "${RED}Invalid username '${username}'. Only letters, numbers, underscore, and hyphen are allowed.${NC}"
+        return 1
+    fi
+
+    # Check if already registered
+    if grep -q "^${username}:" "${USER_REGISTRY}" 2>/dev/null; then
+        local existing_id existing_src
+        existing_id=$(get_domain_id "${username}")
+        existing_src=$(get_src_path "${username}")
+        echo -e "${YELLOW}User '${username}' is already registered (DOMAIN_ID=${existing_id}, src=${existing_src})${NC}"
+        echo ""
+        echo "To update source path:"
+        echo "  nwctl update ${username} --src <new_path>"
+        return 0
+    fi
+
+    # Source path is required
+    if [ -z "${src_path}" ]; then
+        echo -e "${RED}Source path is required${NC}"
+        echo ""
+        echo "Usage: nwctl register <username> --src <src_path>"
+        echo ""
+        echo "Example:"
+        echo "  # Clone your own code first"
+        echo "  cd /home/lz"
+        echo "  git clone https://github.com/autowarefoundation/autoware.git myname_autoware"
+        echo "  cd myname_autoware && vcs import src < repositories/autoware.repos"
+        echo ""
+        echo "  # Then register"
+        echo "  nwctl register myname --src /home/lz/myname_autoware/src"
+        return 1
+    fi
+
+    # Validate source path
+    src_path=$(realpath "${src_path}" 2>/dev/null || echo "${src_path}")
+    if [ ! -d "${src_path}" ]; then
+        echo -e "${RED}Source path does not exist: ${src_path}${NC}"
+        return 1
+    fi
+
+    # Assign DOMAIN_ID
+    local domain_id
+    domain_id=$(next_domain_id)
+
+    # Create user workspace (build/install/log only)
+    local user_ws="${USER_WORKSPACES_ROOT}/${username}"
+    mkdir -p "${user_ws}/build" "${user_ws}/install" "${user_ws}/log"
+
+    # Write to registry: username:domain_id:src_path
+    echo "${username}:${domain_id}:${src_path}" >> "${USER_REGISTRY}"
+
+    echo ""
+    echo -e "${GREEN}================================================"
+    echo -e " User Registered Successfully"
+    echo -e "================================================${NC}"
+    echo -e " Username:     ${username}"
+    echo -e " DOMAIN_ID:    ${domain_id}"
+    echo -e " Source path:  ${src_path}"
+    echo ""
+    echo -e " Container mapping:"
+    echo -e "   /workspace/     <- $(dirname "${src_path}") (your workspace)"
+    echo -e "   /opt/autoware/  <- prebuilt packages (shared)"
+    echo -e "   /autoware_map/  <- map data (shared, read-only)"
+    echo -e "   /rosbag_data/   <- rosbag data (shared, read-only)"
+    echo ""
+    echo -e " Usage:"
+    echo -e "   ${CYAN}nwctl ${username} shell${NC}            Enter dev shell"
+    echo -e "   ${CYAN}nwctl ${username} planning-sim${NC}     Planning simulation"
+    echo -e "   ${CYAN}nwctl ${username} rosbag-replay${NC}    Rosbag replay"
+    echo "================================================"
+    echo ""
+}
+
+# List all registered users
+list_users() {
+    echo ""
+    echo -e "${GREEN}Registered Users:${NC}"
+    echo "--------------------------------------------------------------------------"
+    printf "%-12s %-10s %-8s %s\n" "Username" "DOMAIN_ID" "Status" "Source Path"
+    echo "--------------------------------------------------------------------------"
+    while IFS=: read -r name did src; do
+        local status="stopped"
+        if docker ps --format '{{.Names}}' 2>/dev/null | grep -q "^aw-${name}-"; then
+            status="${GREEN}running${NC}"
+        fi
+        printf "%-12s %-10s " "${name}" "${did}"
+        echo -en "${status}"
+        printf "\t%s\n" "${src:-N/A}"
+    done < "${USER_REGISTRY}"
+    echo "--------------------------------------------------------------------------"
+    echo ""
+}
+
+# Show running containers
+show_status() {
+    echo ""
+    echo -e "${GREEN}Running Autoware Containers:${NC}"
+    echo "--------------------------------------------"
+    docker ps --filter "name=aw-" --format "table {{.Names}}\t{{.Status}}\t{{.Image}}" 2>/dev/null
+    echo "--------------------------------------------"
+    echo ""
+}
+
+# Stop user's containers
+stop_user() {
+    local username="$1"
+    local containers
+    containers=$(docker ps -q --filter "name=aw-${username}-" 2>/dev/null)
+    if [ -n "${containers}" ]; then
+        docker stop ${containers}
+        echo -e "${GREEN}Stopped all containers for '${username}'${NC}"
+    else
+        echo -e "${YELLOW}No running containers for '${username}'${NC}"
+    fi
+}
+
+# Clean user build cache
+clean_user() {
+    local username="$1"
+    local user_ws="${USER_WORKSPACES_ROOT}/${username}"
+
+    if [ ! -d "${user_ws}" ]; then
+        echo -e "${RED}Workspace not found for '${username}'${NC}"
+        return 1
+    fi
+
+    local build_size install_size
+    build_size=$(du -sh "${user_ws}/build" 2>/dev/null | cut -f1)
+    install_size=$(du -sh "${user_ws}/install" 2>/dev/null | cut -f1)
+
+    echo -e "Will clean ${username}'s build cache: build(${build_size}) + install(${install_size})"
+    read -p "Confirm? [y/N] " confirm
+    if [[ "${confirm}" =~ ^[Yy]$ ]]; then
+        rm -rf "${user_ws}/build/"* "${user_ws}/install/"* "${user_ws}/log/"*
+        echo -e "${GREEN}Cleaned${NC}"
+    else
+        echo "Cancelled"
+    fi
+}
+
+# Show disk usage per user
+show_disk_usage() {
+    echo ""
+    echo -e "${GREEN}Disk Usage per User:${NC}"
+    echo "--------------------------------------------"
+    printf "%-15s %-10s %-10s %-10s\n" "Username" "build" "install" "total"
+    echo "--------------------------------------------"
+    while IFS=: read -r name did src; do
+        local user_ws="${USER_WORKSPACES_ROOT}/${name}"
+        if [ -d "${user_ws}" ]; then
+            local b_size i_size t_size
+            b_size=$(du -sh "${user_ws}/build" 2>/dev/null | cut -f1)
+            i_size=$(du -sh "${user_ws}/install" 2>/dev/null | cut -f1)
+            t_size=$(du -sh "${user_ws}" 2>/dev/null | cut -f1)
+            printf "%-15s %-10s %-10s %-10s\n" "${name}" "${b_size:-0}" "${i_size:-0}" "${t_size:-0}"
+        fi
+    done < "${USER_REGISTRY}"
+    echo "--------------------------------------------"
+    local total
+    total=$(du -sh "${USER_WORKSPACES_ROOT}" 2>/dev/null | cut -f1)
+    echo -e "Total: ${total}"
+    echo ""
+}
+
+# ============================================================
+# Main Logic
+# ============================================================
+
+print_help() {
+    echo ""
+    echo -e "${GREEN}nwctl${NC} - Nuway Autoware Container Manager (v${NWCTL_VERSION})"
+    echo ""
+    echo "Usage:"
+    echo "  nwctl register <username> --src <src_path>  Register new user"
+    echo "  nwctl update <username> --src <new_path>    Update user source path"
+    echo "  nwctl list                                  List all users"
+    echo "  nwctl status                                Show running containers"
+    echo "  nwctl disk                                  Show disk usage"
+    echo "  nwctl <username> shell                      Enter dev shell"
+    echo "  nwctl <username> planning-sim               Planning simulation"
+    echo "  nwctl <username> rosbag-replay              Rosbag replay"
+    echo "  nwctl <username> stop                       Stop user's containers"
+    echo "  nwctl <username> clean                      Clean build cache"
+    echo "  nwctl version                               Show version"
+    echo "  nwctl check-env                             Run environment check"
+    echo ""
+    echo "Options (append after mode):"
+    echo "  --map-name <name>       Map subdirectory (default: sample-map-rosbag)"
+    echo "  --rosbag-path <path>    Override rosbag path"
+    echo "  --bag <name>            Specify bag subdirectory"
+    echo "  --rate <float>          Playback rate (default: 1.0)"
+    echo ""
+    echo "Examples:"
+    echo "  nwctl register zhangsan --src /home/lz/zhangsan_autoware/src"
+    echo "  nwctl zhangsan planning-sim"
+    echo "  nwctl zhangsan rosbag-replay"
+    echo "  nwctl zhangsan shell"
+    echo "  nwctl update zhangsan --src /home/lz/zhangsan_v2/src"
+    echo ""
+}
+
+# Show help if no args
+if [ $# -lt 1 ]; then
+    print_help
+    exit 0
+fi
+
+# Handle global commands
+case "$1" in
+    -h|--help)
+        print_help
+        exit 0
+        ;;
+    version|-v|--version)
+        echo "nwctl v${NWCTL_VERSION}"
+        exit 0
+        ;;
+    check-env)
+        bash "${SCRIPT_DIR}/check-env.sh" "${2:-all}"
+        exit 0
+        ;;
+    register)
+        [ $# -lt 2 ] && { echo -e "${RED}Usage: nwctl register <username> --src <src_path>${NC}"; exit 1; }
+        REG_USER="$2"; shift 2; REG_SRC=""
+        while [[ $# -gt 0 ]]; do
+            case $1 in
+                --src) [ $# -ge 2 ] || { echo -e "${RED}Missing value for --src${NC}"; exit 1; }; REG_SRC="$2"; shift 2 ;;
+                *) echo "Unknown option: $1"; exit 1 ;;
+            esac
+        done
+        register_user "${REG_USER}" "${REG_SRC}"
+        exit 0
+        ;;
+    update)
+        [ $# -lt 2 ] && { echo -e "${RED}Usage: nwctl update <username> --src <new_path>${NC}"; exit 1; }
+        UPD_USER="$2"; shift 2; UPD_SRC=""
+        while [[ $# -gt 0 ]]; do
+            case $1 in
+                --src) UPD_SRC="$2"; shift 2 ;;
+                *) echo "Unknown option: $1"; exit 1 ;;
+            esac
+        done
+        if [ -z "${UPD_SRC}" ]; then
+            echo -e "${RED}Usage: nwctl update ${UPD_USER} --src <new_path>${NC}"; exit 1
+        fi
+        UPD_SRC=$(realpath "${UPD_SRC}" 2>/dev/null || echo "${UPD_SRC}")
+        if [ ! -d "${UPD_SRC}" ]; then
+            echo -e "${RED}Path does not exist: ${UPD_SRC}${NC}"; exit 1
+        fi
+        if ! grep -q "^${UPD_USER}:" "${USER_REGISTRY}"; then
+            echo -e "${RED}User '${UPD_USER}' is not registered${NC}"; exit 1
+        fi
+        sed -i "s|^${UPD_USER}:[^:]*:.*|${UPD_USER}:$(get_domain_id "${UPD_USER}"):${UPD_SRC}|" "${USER_REGISTRY}"
+        echo -e "${GREEN}Updated source path for '${UPD_USER}': ${UPD_SRC}${NC}"
+        exit 0
+        ;;
+    list)
+        list_users
+        exit 0
+        ;;
+    status)
+        show_status
+        exit 0
+        ;;
+    disk)
+        show_disk_usage
+        exit 0
+        ;;
+esac
+
+# ---- User commands ----
+USERNAME="$1"
+shift
+
+# Verify user is registered
+DOMAIN_ID=$(get_domain_id "${USERNAME}")
+if [ -z "${DOMAIN_ID}" ]; then
+    echo -e "${RED}User '${USERNAME}' is not registered. Run: nwctl register ${USERNAME} --src <path>${NC}"
+    exit 1
+fi
+
+# Default mode
+MODE="${1:-shell}"
+shift 2>/dev/null || true
+
+# Handle user subcommands
+case "${MODE}" in
+    stop)
+        stop_user "${USERNAME}"
+        exit 0
+        ;;
+    clean)
+        clean_user "${USERNAME}"
+        exit 0
+        ;;
+esac
+
+# ---- Parse additional args ----
+MAP_NAME="${DEFAULT_MAP_NAME}"
+ROSBAG_PATH="${SHARED_ROSBAG_PATH}"
+PLAY_RATE="1.0"
+ROSBAG_FILE=""
+
+while [[ $# -gt 0 ]]; do
+    case $1 in
+        --map-name) MAP_NAME="$2"; shift 2 ;;
+        --rosbag-path) ROSBAG_PATH="$2"; shift 2 ;;
+        --bag) ROSBAG_FILE="$2"; shift 2 ;;
+        --rate) PLAY_RATE="$2"; shift 2 ;;
+        *) echo "Unknown option: $1"; exit 1 ;;
+    esac
+done
+
+# ---- User workspace ----
+USER_WS="${USER_WORKSPACES_ROOT}/${USERNAME}"
+CONTAINER_NAME="aw-${USERNAME}-${MODE}"
+
+# Get user's source path from registry
+USER_SRC_PATH=$(get_src_path "${USERNAME}")
+if [ -z "${USER_SRC_PATH}" ] || [ ! -d "${USER_SRC_PATH}" ]; then
+    echo -e "${RED}Invalid source path: ${USER_SRC_PATH:-not set}${NC}"
+    echo "Update with: nwctl update ${USERNAME} --src <correct_path>"
+    exit 1
+fi
+
+# shell mode: mount user's workspace; other modes: use prebuilt image only
+if [ "${MODE}" = "shell" ]; then
+    USER_WORKSPACE_ROOT="$(dirname "${USER_SRC_PATH}")"
+    SRC_MOUNT="-v ${USER_WORKSPACE_ROOT}:/workspace"
+else
+    SRC_MOUNT=""
+fi
+
+# ---- Detect DISPLAY ----
+if [ -z "${DISPLAY:-}" ]; then
+    if [ -S "/tmp/.X11-unix/X1" ]; then
+        export DISPLAY=:1
+    elif [ -S "/tmp/.X11-unix/X0" ]; then
+        export DISPLAY=:0
+    else
+        echo -e "${RED}Error: No display detected. Set DISPLAY env variable.${NC}"
+        exit 1
+    fi
+fi
+
+if [ -z "${XAUTHORITY:-}" ]; then
+    if [ -f "/run/user/$(id -u)/gdm/Xauthority" ]; then
+        export XAUTHORITY="/run/user/$(id -u)/gdm/Xauthority"
+    fi
+fi
+
+xhost +local:docker 2>/dev/null || true
+
+# ---- Check if container is already running ----
+if docker ps --format '{{.Names}}' 2>/dev/null | grep -q "^${CONTAINER_NAME}$"; then
+    echo -e "${YELLOW}Container '${CONTAINER_NAME}' is already running. Attaching...${NC}"
+    exec docker exec -it "${CONTAINER_NAME}" /bin/bash
+fi
+
+# ---- Generate container entry script ----
+ENTRYPOINT_SCRIPT=$(mktemp /tmp/aw-entry-XXXXXX.sh)
+# Clean up temp file on exit (note: exec replaces process, so also clean before exec)
+trap "rm -f ${ENTRYPOINT_SCRIPT}" EXIT
+
+case "${MODE}" in
+    shell)
+        cat > "${ENTRYPOINT_SCRIPT}" << ENTRY_EOF
+#!/bin/bash
+# Fix home directory permissions and write env config
+sudo chown -R \$(id -u):\$(id -g) \$HOME 2>/dev/null || true
+mkdir -p ~/.ros
+grep -q "ROS_DOMAIN_ID" ~/.bashrc 2>/dev/null || {
+    echo "export ROS_DOMAIN_ID=${DOMAIN_ID}" >> ~/.bashrc
+    echo "export RMW_IMPLEMENTATION=rmw_cyclonedds_cpp" >> ~/.bashrc
+    echo "[ -f /workspace/install/setup.bash ] && source /workspace/install/setup.bash || source /opt/autoware/setup.bash" >> ~/.bashrc
+}
+[ -f /workspace/install/setup.bash ] && source /workspace/install/setup.bash || source /opt/autoware/setup.bash
+echo ""
+echo "========================================"
+echo " Autoware Dev Environment Ready"
+echo "========================================"
+echo " Prebuilt:    /opt/autoware/ (base layer)"
+echo " Your source: /workspace/src/"
+echo " Your build:  /workspace/build/ & install/"
+echo ""
+echo " Development workflow:"
+echo "   1. Edit code under /workspace/src/"
+echo "   2. colcon build --packages-select <pkg> --symlink-install"
+echo "   3. [ -f /workspace/install/setup.bash ] && source /workspace/install/setup.bash || source /opt/autoware/setup.bash"
+echo "   4. Test your changes"
+echo "========================================"
+echo ""
+exec /bin/bash
+ENTRY_EOF
+        ;;
+    planning-sim)
+        cat > "${ENTRYPOINT_SCRIPT}" << ENTRY_EOF
+#!/bin/bash
+sudo chown -R \$(id -u):\$(id -g) \$HOME 2>/dev/null || true
+mkdir -p ~/.ros
+grep -q "ROS_DOMAIN_ID" ~/.bashrc 2>/dev/null || {
+    echo "export ROS_DOMAIN_ID=${DOMAIN_ID}" >> ~/.bashrc
+    echo "export RMW_IMPLEMENTATION=rmw_cyclonedds_cpp" >> ~/.bashrc
+    echo "source /opt/autoware/setup.bash" >> ~/.bashrc
+}
+source /opt/autoware/setup.bash
+ros2 launch autoware_launch planning_simulator.launch.xml \
+    map_path:=/autoware_map/${MAP_NAME} \
+    vehicle_model:=${VEHICLE_MODEL} \
+    sensor_model:=${SENSOR_MODEL}
+ENTRY_EOF
+        ;;
+    rosbag-replay)
+        cat > "${ENTRYPOINT_SCRIPT}" << ENTRY_EOF
+#!/bin/bash
+sudo chown -R \$(id -u):\$(id -g) \$HOME 2>/dev/null || true
+mkdir -p ~/.ros
+grep -q "ROS_DOMAIN_ID" ~/.bashrc 2>/dev/null || {
+    echo "export ROS_DOMAIN_ID=${DOMAIN_ID}" >> ~/.bashrc
+    echo "export RMW_IMPLEMENTATION=rmw_cyclonedds_cpp" >> ~/.bashrc
+    echo "source /opt/autoware/setup.bash" >> ~/.bashrc
+}
+source /opt/autoware/setup.bash
+ros2 launch autoware_launch logging_simulator.launch.xml \
+    map_path:=/autoware_map/${MAP_NAME} \
+    vehicle_model:=${VEHICLE_MODEL} \
+    sensor_model:=${SENSOR_MODEL}
+ENTRY_EOF
+        ;;
+    *)
+        echo -e "${RED}Unknown mode: ${MODE}${NC}"
+        print_help
+        exit 1
+        ;;
+esac
+chmod +x "${ENTRYPOINT_SCRIPT}"
+
+# ---- Print info ----
+echo ""
+echo -e "${GREEN}================================================"
+echo -e " Autoware - ${MODE}"
+echo -e "================================================${NC}"
+echo -e " User:       ${CYAN}${USERNAME}${NC} (DOMAIN_ID=${DOMAIN_ID})"
+echo -e " Container:  ${CONTAINER_NAME}"
+echo -e " Image:      ${AUTOWARE_IMAGE}"
+if [ "${MODE}" = "shell" ]; then
+    echo -e " Workspace:  $(dirname "${USER_SRC_PATH}") -> /workspace"
+fi
+echo -e " Map:        ${SHARED_MAP_PATH}/${MAP_NAME}"
+echo -e " DISPLAY:    ${DISPLAY}"
+echo ""
+
+if [ "${MODE}" = "shell" ]; then
+    echo " Dev guide:"
+    echo "   cd /workspace"
+    echo "   colcon build --packages-select <pkg> --symlink-install"
+    echo "   [ -f /workspace/install/setup.bash ] && source /workspace/install/setup.bash || source /opt/autoware/setup.bash"
+    echo ""
+fi
+
+if [ "${MODE}" = "planning-sim" ]; then
+    echo " Steps:"
+    echo "   1. Wait for rviz2 window to appear"
+    echo "   2. Click '2D Pose Estimate' to set initial pose"
+    echo "   3. Click '2D Goal Pose' to set destination"
+    echo "   4. Click buttons in AutowareStatePanel to start"
+    echo ""
+fi
+
+if [ "${MODE}" = "rosbag-replay" ]; then
+    echo " Rosbag replay steps:"
+    echo "   1. Wait for Autoware to start, confirm pointcloud map is loaded in rviz"
+    echo "   2. Click '2D Pose Estimate' in rviz to set initial vehicle pose"
+    echo "   3. Open another terminal:"
+    echo "      docker exec -it ${CONTAINER_NAME} bash"
+    echo "   4. Inside the container:"
+    echo "      source /opt/autoware/setup.bash"
+    echo "      export ROS_DOMAIN_ID=${DOMAIN_ID}"
+    echo "      ros2 bag play /rosbag_data -r ${PLAY_RATE} -s sqlite3"
+    echo "   5. In rviz Views panel, set Target Frame to 'base_link' to follow the vehicle"
+    echo ""
+fi
+
+echo "================================================"
+echo ""
+
+# ---- Launch container ----
+# Use docker run without exec so trap can clean up temp file
+docker run -it --rm \
+    --name "${CONTAINER_NAME}" \
+    --net=host \
+    --ipc=host \
+    --runtime=nvidia \
+    -e NVIDIA_DRIVER_CAPABILITIES=all \
+    -e DISPLAY="${DISPLAY}" \
+    -e XAUTHORITY="${XAUTHORITY:-}" \
+    -e XDG_RUNTIME_DIR="${XDG_RUNTIME_DIR:-/run/user/$(id -u)}" \
+    -e RMW_IMPLEMENTATION=rmw_cyclonedds_cpp \
+    -e ROS_DOMAIN_ID="${DOMAIN_ID}" \
+    -e TZ="$(cat /etc/timezone 2>/dev/null || echo UTC)" \
+    -e LOCAL_UID="$(id -u)" \
+    -e LOCAL_GID="$(id -g)" \
+    -e LOCAL_USER="$(id -un)" \
+    -e LOCAL_GROUP="$(id -gn)" \
+    -v /tmp/.X11-unix:/tmp/.X11-unix \
+    ${SRC_MOUNT} \
+    -v "${SHARED_MAP_PATH}":/autoware_map:ro \
+    -v "${SHARED_DATA_PATH}":/autoware_data:ro \
+    -v "${ROSBAG_PATH}":/rosbag_data:ro \
+    -v "${ENTRYPOINT_SCRIPT}":/entry.sh:ro \
+    "${AUTOWARE_IMAGE}" \
+    bash /entry.sh
