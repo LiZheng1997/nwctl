@@ -578,9 +578,9 @@ fi
 # shell mode: mount user's workspace; other modes: use prebuilt image only
 if [ "${MODE}" = "shell" ]; then
     USER_WORKSPACE_ROOT="$(dirname "${USER_SRC_PATH}")"
-    SRC_MOUNT="-v ${USER_WORKSPACE_ROOT}:/workspace"
+    SRC_MOUNT=(-v "${USER_WORKSPACE_ROOT}:/workspace")
 else
-    SRC_MOUNT=""
+    SRC_MOUNT=()
 fi
 
 # ---- Detect DISPLAY ----
@@ -763,7 +763,7 @@ docker run -it --rm \
     -e LOCAL_USER="$(id -un)" \
     -e LOCAL_GROUP="$(id -gn)" \
     -v /tmp/.X11-unix:/tmp/.X11-unix \
-    ${SRC_MOUNT:+"${SRC_MOUNT}"} \
+    "${SRC_MOUNT[@]+"${SRC_MOUNT[@]}"}" \
     -v "${SHARED_MAP_PATH}":/autoware_map:ro \
     -v "${SHARED_DATA_PATH}":/autoware_data:ro \
     -v "${ROSBAG_PATH}":/rosbag_data:ro \
