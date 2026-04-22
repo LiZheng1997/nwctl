@@ -44,6 +44,16 @@ init_workspace() {
     touch "${USER_REGISTRY}"
 }
 
+# ---- Registry lock: serialize writes to users.conf ----
+# Usage: with_registry_lock <command> [args...]
+with_registry_lock() {
+    local lock_file="${USER_REGISTRY}.lock"
+    (
+        flock -x -w 10 200 || { echo -e "${RED}Could not acquire registry lock${NC}"; exit 1; }
+        "$@"
+    ) 200>"${lock_file}"
+}
+
 # ============================================================
 # User Management Functions
 # ============================================================
@@ -198,6 +208,57 @@ show_status() {
     echo ""
 }
 
+# Unregister a user: remove from registry and optionally delete workspace
+# Usage: unregister_user <username> [--keep-workspace]
+unregister_user() {
+    local username="$1"
+    local keep_workspace="${2:-}"
+    local user_ws="${USER_WORKSPACES_ROOT}/${username}"
+
+    if ! grep -q "^${username}:" "${USER_REGISTRY}" 2>/dev/null; then
+        echo -e "${RED}User '${username}' is not registered${NC}"
+        return 1
+    fi
+
+    # Refuse if user has running containers
+    if docker ps --format '{{.Names}}' 2>/dev/null | grep -q "^aw-${username}-"; then
+        echo -e "${RED}User '${username}' has running containers. Stop them first:${NC}"
+        echo "  nwctl ${username} stop"
+        return 1
+    fi
+
+    local did src
+    did=$(get_domain_id "${username}")
+    src=$(get_src_path "${username}")
+
+    echo "Will unregister '${username}':"
+    echo "  DOMAIN_ID:    ${did}"
+    echo "  Source path:  ${src} (NOT deleted, you manage it)"
+    if [ "${keep_workspace}" = "--keep-workspace" ]; then
+        echo "  Workspace:    ${user_ws} (kept)"
+    else
+        local ws_size="0"
+        [ -d "${user_ws}" ] && ws_size=$(du -sh "${user_ws}" 2>/dev/null | cut -f1)
+        echo "  Workspace:    ${user_ws} (${ws_size}, WILL BE DELETED)"
+    fi
+    echo ""
+    read -rp "Confirm unregister? [y/N] " confirm
+    if [[ ! "${confirm}" =~ ^[Yy]$ ]]; then
+        echo "Cancelled"
+        return 0
+    fi
+
+    # Remove from registry
+    sed -i "/^${username}:/d" "${USER_REGISTRY}"
+
+    # Delete workspace unless --keep-workspace
+    if [ "${keep_workspace}" != "--keep-workspace" ] && [ -d "${user_ws}" ]; then
+        rm -rf "${user_ws}"
+    fi
+
+    echo -e "${GREEN}Unregistered '${username}'${NC}"
+}
+
 # Stop user's containers
 stop_user() {
     local username="$1"
@@ -209,6 +270,74 @@ stop_user() {
     else
         echo -e "${YELLOW}No running containers for '${username}'${NC}"
     fi
+}
+
+# Cleanup orphan resources: exited containers, stale temp files, unused images
+cleanup_orphans() {
+    local dry_run="${1:-}"
+
+    echo ""
+    echo -e "${GREEN}Cleanup Report${NC}"
+    echo "--------------------------------------------"
+
+    # 1. Exited nwctl containers
+    local exited_containers
+    exited_containers=$(docker ps -a --filter "name=aw-" --filter "status=exited" --format "{{.Names}}" 2>/dev/null)
+    if [ -n "${exited_containers}" ]; then
+        echo -e "${YELLOW}Exited containers:${NC}"
+        echo "${exited_containers}" | awk '{print "  "$0}'
+    else
+        echo "Exited containers:  (none)"
+    fi
+
+    # 2. Stale entry scripts in /tmp
+    local temp_count
+    temp_count=$(find /tmp -maxdepth 1 -name 'aw-entry-*.sh' -mtime +0 2>/dev/null | wc -l)
+    if [ "${temp_count:-0}" -gt 0 ]; then
+        echo -e "${YELLOW}Stale temp files (/tmp/aw-entry-*.sh older than 1 day):${NC}"
+        echo "  ${temp_count} file(s)"
+    else
+        echo "Stale temp files:   (none)"
+    fi
+
+    # 3. Stale lock files
+    local lock_files=""
+    [ -f "${USER_REGISTRY}.lock" ] && lock_files="${USER_REGISTRY}.lock"
+
+    echo "--------------------------------------------"
+
+    if [ -z "${exited_containers}" ] && [ "${temp_count:-0}" -eq 0 ] && [ -z "${lock_files}" ]; then
+        echo -e "${GREEN}Nothing to clean up${NC}"
+        return 0
+    fi
+
+    if [ "${dry_run}" = "--dry-run" ]; then
+        echo ""
+        echo "Dry run: nothing was removed. Run without --dry-run to clean up."
+        return 0
+    fi
+
+    echo ""
+    read -rp "Proceed with cleanup? [y/N] " confirm
+    if [[ ! "${confirm}" =~ ^[Yy]$ ]]; then
+        echo "Cancelled"
+        return 0
+    fi
+
+    # Remove exited containers
+    if [ -n "${exited_containers}" ]; then
+        echo "${exited_containers}" | xargs -r docker rm
+    fi
+
+    # Remove stale temp files
+    if [ "${temp_count:-0}" -gt 0 ]; then
+        find /tmp -maxdepth 1 -name 'aw-entry-*.sh' -mtime +0 -delete 2>/dev/null
+    fi
+
+    # Remove stale lock
+    [ -n "${lock_files}" ] && rm -f "${lock_files}"
+
+    echo -e "${GREEN}Cleanup complete${NC}"
 }
 
 # Clean user build cache
@@ -270,9 +399,11 @@ print_help() {
     echo "Usage:"
     echo "  nwctl register <username> --src <src_path>  Register new user"
     echo "  nwctl update <username> --src <new_path>    Update user source path"
+    echo "  nwctl unregister <username> [--keep-workspace]  Remove user"
     echo "  nwctl list                                  List all users"
     echo "  nwctl status                                Show running containers"
     echo "  nwctl disk                                  Show disk usage"
+    echo "  nwctl cleanup [--dry-run]                   Clean orphan containers & temp files"
     echo "  nwctl <username> shell                      Enter dev shell"
     echo "  nwctl <username> planning-sim               Planning simulation"
     echo "  nwctl <username> rosbag-replay              Rosbag replay"
@@ -332,7 +463,7 @@ case "$1" in
                 *) echo "Unknown option: $1"; exit 1 ;;
             esac
         done
-        register_user "${REG_USER}" "${REG_SRC}"
+        with_registry_lock register_user "${REG_USER}" "${REG_SRC}"
         exit 0
         ;;
     update)
@@ -354,8 +485,21 @@ case "$1" in
         if ! grep -q "^${UPD_USER}:" "${USER_REGISTRY}"; then
             echo -e "${RED}User '${UPD_USER}' is not registered${NC}"; exit 1
         fi
-        sed -i "s|^${UPD_USER}:[^:]*:.*|${UPD_USER}:$(get_domain_id "${UPD_USER}"):${UPD_SRC}|" "${USER_REGISTRY}"
+        with_registry_lock sed -i "s|^${UPD_USER}:[^:]*:.*|${UPD_USER}:$(get_domain_id "${UPD_USER}"):${UPD_SRC}|" "${USER_REGISTRY}"
         echo -e "${GREEN}Updated source path for '${UPD_USER}': ${UPD_SRC}${NC}"
+        exit 0
+        ;;
+    unregister)
+        [ $# -lt 2 ] && { echo -e "${RED}Usage: nwctl unregister <username> [--keep-workspace]${NC}"; exit 1; }
+        UNR_USER="$2"; shift 2
+        UNR_KEEP=""
+        while [[ $# -gt 0 ]]; do
+            case $1 in
+                --keep-workspace) UNR_KEEP="--keep-workspace"; shift ;;
+                *) echo "Unknown option: $1"; exit 1 ;;
+            esac
+        done
+        with_registry_lock unregister_user "${UNR_USER}" "${UNR_KEEP}"
         exit 0
         ;;
     list)
@@ -368,6 +512,10 @@ case "$1" in
         ;;
     disk)
         show_disk_usage
+        exit 0
+        ;;
+    cleanup)
+        cleanup_orphans "${2:-}"
         exit 0
         ;;
 esac

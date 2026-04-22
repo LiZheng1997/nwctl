@@ -83,35 +83,59 @@ else
     fail "X11 socket not found" "Ensure a graphical desktop is running"
 fi
 
+# Check if ALL files matching a pattern are readable by current user
+# Usage: check_readable <base_dir> <file_pattern> <label>
+check_readable() {
+    local base="$1" pattern="$2" label="$3"
+    local unreadable
+    unreadable=$(find "${base}" -name "${pattern}" \! -readable 2>/dev/null | head -3)
+    if [ -n "${unreadable}" ]; then
+        local count
+        count=$(find "${base}" -name "${pattern}" \! -readable 2>/dev/null | wc -l)
+        fail "${label}: ${count} unreadable file(s)" "sudo chmod a+r \"${base}\"/*${pattern#\*}"
+        echo "       Unreadable samples:"
+        echo "${unreadable}" | awk '{print "         "$0}'
+        return 1
+    fi
+    return 0
+}
+
 # 5. Data paths
 echo "[5/6] Data Paths"
 if [ -d "${SHARED_MAP_PATH}" ]; then
     if find "${SHARED_MAP_PATH}" -name '*.pcd' -print -quit 2>/dev/null | grep -q .; then
-        pass "Pointcloud map: ${SHARED_MAP_PATH}"
+        if check_readable "${SHARED_MAP_PATH}" '*.pcd' "Pointcloud map permission"; then
+            pass "Pointcloud map: ${SHARED_MAP_PATH}"
+        fi
     else
         warn "Map directory exists but no .pcd files found: ${SHARED_MAP_PATH}"
     fi
     if find "${SHARED_MAP_PATH}" -name '*.osm' -print -quit 2>/dev/null | grep -q .; then
-        pass "Lanelet2 map: ${SHARED_MAP_PATH}"
+        if check_readable "${SHARED_MAP_PATH}" '*.osm' "Lanelet2 map permission"; then
+            pass "Lanelet2 map: ${SHARED_MAP_PATH}"
+        fi
     else
         warn "Map directory exists but no .osm files found: ${SHARED_MAP_PATH}"
     fi
 else
     if [ "${MODE}" = "planning-sim" ] || [ "${MODE}" = "rosbag-replay" ] || [ "${MODE}" = "all" ]; then
-        fail "Map path does not exist: ${SHARED_MAP_PATH}" "Edit SHARED_MAP_PATH in env.sh or export MAP_PATH=/your/map/path"
+        fail "Map path does not exist: ${SHARED_MAP_PATH}" "Edit SHARED_MAP_PATH in env.sh"
     fi
 fi
 
 if [ "${MODE}" = "rosbag-replay" ] || [ "${MODE}" = "all" ]; then
     if [ -d "${SHARED_ROSBAG_PATH}" ]; then
-        BAG_COUNT=$(find "${SHARED_ROSBAG_PATH}" -name "*.db3" -o -name "*.mcap" 2>/dev/null | wc -l)
+        BAG_COUNT=$(find "${SHARED_ROSBAG_PATH}" \( -name "*.db3" -o -name "*.mcap" \) 2>/dev/null | wc -l)
         if [ "${BAG_COUNT}" -gt 0 ]; then
-            pass "Rosbag data: ${SHARED_ROSBAG_PATH} (${BAG_COUNT} files)"
+            if check_readable "${SHARED_ROSBAG_PATH}" '*.db3' "Rosbag permission" && \
+               check_readable "${SHARED_ROSBAG_PATH}" '*.mcap' "Rosbag permission"; then
+                pass "Rosbag data: ${SHARED_ROSBAG_PATH} (${BAG_COUNT} files)"
+            fi
         else
             warn "Rosbag directory exists but no .db3/.mcap files found: ${SHARED_ROSBAG_PATH}"
         fi
     else
-        fail "Rosbag path does not exist: ${SHARED_ROSBAG_PATH}" "Edit SHARED_ROSBAG_PATH in env.sh or export ROSBAG_PATH=/your/rosbag/path"
+        fail "Rosbag path does not exist: ${SHARED_ROSBAG_PATH}" "Edit SHARED_ROSBAG_PATH in env.sh"
     fi
 fi
 

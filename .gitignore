@@ -5,6 +5,9 @@ workspaces/
 # Internal docs (not distributed)
 CONTRIBUTING.md
 
+# Intermediate doc build artifacts
+docs/*.html
+
 # Editor
 *.swp
 *.swo
